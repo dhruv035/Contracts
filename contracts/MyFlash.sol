@@ -11,8 +11,9 @@ import '@uniswap/v3-periphery/contracts/libraries/TransferHelper.sol';
 
 contract FlashLoan is FlashLoanSimpleReceiverBase {
     address payable owner;
+    uint256 amountIn;
     address theContract;
-    address target;
+    address targetCollateral;
     address targetUser;
     uint256 repayAmount;
     ISwapRouter swapRouter;
@@ -32,7 +33,7 @@ contract FlashLoan is FlashLoanSimpleReceiverBase {
     address public constant USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
 
     // For this example, we will set the pool fee to 0.3%.
-    uint24 public constant poolFee = 3000;
+    uint24 public poolFee = 3000;
 
     modifier onlyOwner() {
         require(msg.sender == owner, "Only the contract owner can call this function");
@@ -46,32 +47,31 @@ contract FlashLoan is FlashLoanSimpleReceiverBase {
         address initiator, // The address of the flashloan initiator
         bytes calldata params // The byte-encoded params passed when initiating the flashloan
     ) external override returns (bool) {
-        uint256 amountIn;
         uint256 amountOut;
         uint256 amountOwed = amount + premium;
-        IERC20(asset).approve(address(POOL), amountOwed);
+        IERC20(asset).approve(address(POOL), amountOwed+amount);
          
         //Liquidate the position for a debt
-         IPool POOL = IPool(target);
+         IPool POOL = IPool(targetCollateral);
 
-        POOL.liquidationCall(target,asset,targetUser,repayAmount,false);
+        POOL.liquidationCall(targetCollateral,asset,targetUser,repayAmount,false);
 
         
-        IERC20(target).approve(address(this),amountIn);
-        TransferHelper.safeTransferFrom(target, initiator, address(this), amountIn);
-        TransferHelper.safeApprove(target, address(swapRouter), amountIn);
+        IERC20(targetCollateral).approve(address(this),amountIn);
+        TransferHelper.safeTransferFrom(targetCollateral, initiator, address(this), amountIn);
+        TransferHelper.safeApprove(targetCollateral, address(swapRouter), amountIn);
 
 
 
         ISwapRouter.ExactInputSingleParams memory param =
             ISwapRouter.ExactInputSingleParams({
-                tokenIn: DAI,
-                tokenOut: WETH9,
+                tokenIn: targetCollateral,
+                tokenOut: asset,
                 fee: poolFee,
                 recipient: msg.sender,
                 deadline: block.timestamp,
                 amountIn: amountIn,
-                amountOutMinimum: 0,
+                amountOutMinimum: amountOwed,
                 sqrtPriceLimitX96: 0
             });
         // The call to `exactInputSingle` executes the swap.
@@ -99,12 +99,14 @@ contract FlashLoan is FlashLoanSimpleReceiverBase {
         token.transfer(msg.sender, token.balanceOf(address(this)));
     }
 
-    function executeLiquidation(address _flashToken, uint256 flashAmount, address _target, address _targetUser,uint256 _repayAmount) public {
+    function executeLiquidation(address _flashToken, address _targetCollateral, address _targetUser, uint256 _repayAmount, uint256 _amountIn, uint24 _poolFee) public {
 
-        target = _target;
+        poolFee = _poolFee;
+        targetCollateral = _targetCollateral;
+        amountIn = _amountIn;
         targetUser = _targetUser;
         repayAmount = _repayAmount;
-        requestFlashLoan(_flashToken,flashAmount);
+        requestFlashLoan(_flashToken,repayAmount);
     }
 
     // the contract can give ether.
